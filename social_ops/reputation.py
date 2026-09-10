@@ -10,24 +10,34 @@ import logging
 
 from . import db
 from .ollama_draft import draft_reply, init_ollama_client
-from .platforms import twitter
+from .platforms import mastodon, twitter
 
 logger = logging.getLogger(__name__)
 
 
-def scan_mentions(client_slug: str, platform: str = "twitter") -> list:
-    """Find recent mentions of the client's own handle, draft a reply to each
+def scan_mentions(client_slug: str, platform: str = "twitter", hashtag: str = None) -> list:
+    """Find recent mentions of the client's own brand, draft a reply to each
     one that doesn't already have a draft. Returns the list of new draft ids.
-    """
-    if platform != "twitter":
-        raise NotImplementedError("reputation scanning currently only supports platform='twitter'.")
 
+    platform='twitter': searches @handle mentions. Requires a paid X API tier.
+    platform='mastodon': free/keyless, but searches a hashtag (`hashtag` arg,
+        required) rather than @mentions — pass the brand's own hashtag if it
+        has one, since Mastodon has no public @mention search.
+    """
     conn = db.get_connection()
     client = db.get_client(conn, client_slug)
-    if not client["twitter_handle"]:
-        raise ValueError(f"Client '{client_slug}' has no twitter_handle configured.")
 
-    mentions = twitter.search_recent(f"@{client['twitter_handle']}", max_results=25)
+    if platform == "twitter":
+        if not client["twitter_handle"]:
+            raise ValueError(f"Client '{client_slug}' has no twitter_handle configured.")
+        mentions = twitter.search_recent(f"@{client['twitter_handle']}", max_results=25)
+    elif platform == "mastodon":
+        if not hashtag:
+            raise ValueError("platform='mastodon' requires a --hashtag (Mastodon has no public @mention search).")
+        mentions = mastodon.hashtag_timeline(hashtag, limit=25)
+    else:
+        raise NotImplementedError(f"reputation scanning does not support platform='{platform}'.")
+
     new_draft_ids = []
     ollama_client = None
 

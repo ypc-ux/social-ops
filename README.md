@@ -18,8 +18,8 @@ capabilities down to actual working code:
 | Video's pitch | This repo | Status |
 |---|---|---|
 | "Content Engine" | `content_engine.py` — topic → Ollama draft → voice gate → queue | **Real.** Trend/topic input is manual or fed by your own cron — no fabricated "trend detection" data source. |
-| "Market Radar" | `market_radar.py` — X search for competitor mentions, spike detection vs. recent history, drafts a response | **Real**, X/Twitter only. Requires a paid X API tier for search. |
-| "Reviews & Reputation" | `reputation.py` — finds new @mentions on X, drafts a reply | **Real**, X mentions only — not Google/Yelp reviews (not in this build's platform scope; add `reviews.py` the same way if you get that API access). |
+| "Market Radar" | `market_radar.py` — searches for competitor mentions, spike detection vs. recent history, drafts a response | **Real.** X/Twitter (paid API tier required) or Mastodon (free, keyless — public hashtag timelines, no account needed to read). |
+| "Reviews & Reputation" | `reputation.py` — finds new mentions of the brand, drafts a reply | **Real.** X @mentions (paid tier) or Mastodon hashtag (free) — not Google/Yelp reviews (not in this build's platform scope; add `reviews.py` the same way if you get that API access). |
 | "Orchestrator" | `orchestrator.py` — every draft is scored by Claude against the brand voice + checked against the daily post budget; auto-approves or holds for a human, notifies Slack | **Real.** Fails closed: if the gate can't run (no API key, scoring error), the draft is held for manual review, never silently shipped. |
 
 There is one drafting model (Ollama, local, cheap) and one independent
@@ -84,12 +84,19 @@ python -m social_ops.cli approve 7
 python -m social_ops.cli post 7
 ```
 
-## What still needs your credentials before it's live
+## What still needs credentials, and what doesn't
 
-- **`ANTHROPIC_API_KEY`** — without it, every draft holds for manual review (safe default, but no automation).
-- **X/Twitter API keys** — `TWITTER_BEARER_TOKEN` for search (Market Radar, Reputation), full OAuth 1.0a keys for posting. Requires at least the Basic paid tier on developer.twitter.com for recent search.
-- **`SLACK_WEBHOOK_URL`** — optional but recommended; without it, held drafts only show up if you run `social-ops pending` yourself.
+- **`ANTHROPIC_API_KEY`** — always required for automation. There's no free/keyless equivalent for the independent voice-check: that's the point of it being independent. Without it, every draft holds for manual review instead of auto-approving (safe default, zero automation).
+- **X/Twitter** — needs a paid API tier (`TWITTER_BEARER_TOKEN` for search, full OAuth 1.0a keys to post). Not free.
+- **Mastodon** — **reading is genuinely free and keyless.** `radar-scan --platform mastodon` and `reputation-scan --platform mastodon` work with zero credentials, against any public instance's hashtag timelines. Posting still needs a free access token from your own account (no payment, but not literally keyless either) — trade-off is hashtag-based monitoring instead of arbitrary keyword/@mention search, since Mastodon doesn't expose that publicly.
+- **`SLACK_WEBHOOK_URL`** — optional but recommended; without it, held drafts only show up if you run `social-ops pending` yourself. Free to create.
 - **LinkedIn** — intentionally not wired to search or auto-post. LinkedIn's API requires Marketing Developer Platform partner approval for that, which most developer accounts don't have. Approved LinkedIn drafts export to a CSV (`linkedin_pending_posts.csv`) for manual posting instead of pretending to automate something that isn't accessible.
+
+**Bottom line:** you can run Content Engine + Market Radar + Reputation end
+to end on Ollama (free) + Mastodon (free) with zero paid API access — the
+one unavoidable cost is Claude for the voice gate, because that's the
+component whose entire job is to not be free (i.e., not be the same model
+grading its own work).
 
 ## Running this on a schedule (Deerflow)
 

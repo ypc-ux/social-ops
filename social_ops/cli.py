@@ -7,7 +7,7 @@ import sys
 from dotenv import load_dotenv
 
 from . import content_engine, db, market_radar, orchestrator, reputation
-from .platforms import linkedin, twitter
+from .platforms import linkedin, mastodon, twitter
 
 load_dotenv()
 log = logging.getLogger("social-ops")
@@ -46,7 +46,7 @@ def cmd_radar_scan(args):
 
 
 def cmd_reputation_scan(args):
-    ids = reputation.scan_mentions(args.client, platform=args.platform)
+    ids = reputation.scan_mentions(args.client, platform=args.platform, hashtag=args.hashtag)
     print(f"Drafted {len(ids)} replies: {ids}")
 
 
@@ -125,6 +125,12 @@ def cmd_post(args):
             path = linkedin.export_for_manual_posting(args.draft_id, row["body"], client["slug"])
             conn.execute("UPDATE drafts SET status = 'posted', posted_at = datetime('now') WHERE id = ?", (args.draft_id,))
             print(f"Exported to {path} for manual posting (LinkedIn API not wired — see platforms/linkedin.py).")
+        elif row["platform"] == "mastodon":
+            result = mastodon.post_status(row["body"], reply_to_id=row["reply_to_url"] and row["reply_to_url"].rsplit("/", 1)[-1])
+            conn.execute(
+                "UPDATE drafts SET status = 'posted', posted_at = datetime('now'), platform_post_id = ? WHERE id = ?",
+                (result.get("id"), args.draft_id),
+            )
         else:
             sys.exit(f"Unknown platform '{row['platform']}'")
 
@@ -158,20 +164,21 @@ def build_parser():
 
     p = sub.add_parser("content-draft", help="Draft a post for a topic (Content Engine).")
     p.add_argument("client")
-    p.add_argument("--platform", required=True, choices=["twitter", "linkedin"])
+    p.add_argument("--platform", required=True, choices=["twitter", "linkedin", "mastodon"])
     p.add_argument("--topic", required=True)
     p.add_argument("--context")
     p.set_defaults(func=cmd_content_draft)
 
     p = sub.add_parser("radar-scan", help="Scan for a competitor mention spike (Market Radar).")
     p.add_argument("client")
-    p.add_argument("--query", required=True, help="Competitor name or @handle to search for.")
-    p.add_argument("--platform", default="twitter", choices=["twitter"])
+    p.add_argument("--query", required=True, help="Twitter: search term/@handle. Mastodon: a hashtag (no #).")
+    p.add_argument("--platform", default="twitter", choices=["twitter", "mastodon"])
     p.set_defaults(func=cmd_radar_scan)
 
-    p = sub.add_parser("reputation-scan", help="Scan for new mentions of the client's own handle.")
+    p = sub.add_parser("reputation-scan", help="Scan for new mentions of the client's own brand.")
     p.add_argument("client")
-    p.add_argument("--platform", default="twitter", choices=["twitter"])
+    p.add_argument("--platform", default="twitter", choices=["twitter", "mastodon"])
+    p.add_argument("--hashtag", help="Required for --platform mastodon (no public @mention search there).")
     p.set_defaults(func=cmd_reputation_scan)
 
     p = sub.add_parser("orchestrate", help="Run pending drafts through the voice+budget gate.")

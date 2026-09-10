@@ -10,7 +10,7 @@ import logging
 
 from . import db
 from .ollama_draft import draft_reply, init_ollama_client
-from .platforms import twitter
+from .platforms import mastodon, twitter
 
 logger = logging.getLogger(__name__)
 
@@ -18,18 +18,27 @@ SPIKE_MULTIPLIER = 2.0  # this scan must be >= 2x the recent average to flag
 
 
 def scan_competitor(client_slug: str, query: str, platform: str = "twitter") -> dict:
-    """Search recent mentions of `query` (a competitor name/handle), record
-    them, and draft a response if this scan is a spike vs. recent history.
+    """Search recent mentions of `query`, record them, and draft a response
+    if this scan is a spike vs. recent history.
+
+    platform='twitter': `query` is a free-text search term/handle. Requires
+        a paid X API tier — see platforms/twitter.py.
+    platform='mastodon': `query` is a hashtag (no leading #), searched via a
+        public, keyless timeline endpoint. Free, but only catches posts
+        actually tagged with that hashtag — not arbitrary keyword mentions.
 
     Returns a summary dict: {count, average, is_spike, draft_id (or None)}.
     """
-    if platform != "twitter":
-        raise NotImplementedError("market_radar currently only supports platform='twitter' — see platforms/linkedin.py for why.")
-
     conn = db.get_connection()
     client = db.get_client(conn, client_slug)
 
-    mentions = twitter.search_recent(query, max_results=50)
+    if platform == "twitter":
+        mentions = twitter.search_recent(query, max_results=50)
+    elif platform == "mastodon":
+        mentions = mastodon.hashtag_timeline(query, limit=40)
+    else:
+        raise NotImplementedError(f"market_radar does not support platform='{platform}' — see platforms/linkedin.py for why LinkedIn isn't here.")
+
     count = len(mentions)
 
     for m in mentions:
