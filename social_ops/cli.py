@@ -7,6 +7,7 @@ import sys
 from dotenv import load_dotenv
 
 from . import content_engine, db, market_radar, orchestrator, reputation
+from .ops_publish import LocalSignal, publish_signals
 from .platforms import linkedin, mastodon, twitter
 
 load_dotenv()
@@ -37,6 +38,14 @@ def cmd_init_client(args):
 
 def cmd_content_draft(args):
     draft_id = content_engine.create_draft(args.client, args.platform, args.topic, context=args.context or "")
+    publish_signals("social-ops", [
+        LocalSignal(
+            project="social-ops",
+            kind="did",
+            title=f"Drafted {args.platform} post for {args.client}",
+            detail=f"Topic: {args.topic}\nDraft ID: {draft_id}",
+        )
+    ])
     print(f"Draft #{draft_id} created. Run `social-ops orchestrate {draft_id}` to route it.")
 
 
@@ -48,6 +57,15 @@ def cmd_radar_scan(args):
 def cmd_reputation_scan(args):
     ids = reputation.scan_mentions(args.client, platform=args.platform, hashtag=args.hashtag)
     print(f"Drafted {len(ids)} replies: {ids}")
+    if ids:
+        publish_signals("social-ops", [
+            LocalSignal(
+                project="social-ops",
+                kind="did",
+                title=f"Reputation scan: drafted {len(ids)} replies for {args.client}",
+                detail=f"Platform: {args.platform}\nDraft IDs: {', '.join(str(i) for i in ids)}",
+            )
+        ])
 
 
 def cmd_orchestrate(args):
@@ -57,9 +75,29 @@ def cmd_orchestrate(args):
     else:
         rows = conn.execute("SELECT * FROM drafts WHERE status = 'draft'").fetchall()
 
+    signals = []
     for row in rows:
         result = orchestrator.process_draft(conn, row)
         print(f"Draft #{row['id']}: {result}")
+        
+        # Publish signal based on decision
+        if result.get("decision") == "approved":
+            signals.append(LocalSignal(
+                project="social-ops",
+                kind="did",
+                title=f"Auto-approved {row['platform']} post (score={result.get('score', 0)})",
+                detail=f"Draft #{row['id']} for client {row['client_id']}",
+            ))
+        elif result.get("decision") == "pending_approval":
+            signals.append(LocalSignal(
+                project="social-ops",
+                kind="needs_you",
+                title=f"{row['platform']} post needs review",
+                detail=f"Draft #{row['id']} — {result.get('reason', 'unknown reason')}",
+            ))
+    
+    if signals:
+        publish_signals("social-ops", signals)
     conn.close()
 
 
@@ -136,6 +174,16 @@ def cmd_post(args):
 
         conn.commit()
         print(f"Draft #{args.draft_id} posted.")
+        
+        # Publish signal that post went live
+        publish_signals("social-ops", [
+            LocalSignal(
+                project="social-ops",
+                kind="did",
+                title=f"Posted to {row['platform']} for {client['slug']}",
+                detail=f"Draft #{args.draft_id}\n{row['body'][:100]}...",
+            )
+        ])
     except Exception as e:
         conn.execute("UPDATE drafts SET status = 'post_failed' WHERE id = ?", (args.draft_id,))
         conn.commit()
